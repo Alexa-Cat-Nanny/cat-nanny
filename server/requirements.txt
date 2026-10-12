@@ -1,0 +1,6 @@
+# Runtime dependencies of the MCP server on Lambda (boto3 is provided by the Lambda runtime).
+# cat-health-signals is installed separately by scripts/build_lambda.sh.
+mcp==2.2.0
+mangum==0.22.0
+# Time zone database (Windows Python has none built in)
+tzdata

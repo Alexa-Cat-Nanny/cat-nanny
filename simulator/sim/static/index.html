@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cat Nanny on Alexa+ (simulated)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --tile: #e7ede9;      /* page: pale kitchen tile */
+    --surface: #fafcfb;
+    --ink: #1c2b3a;
+    --muted: #5e6b73;
+    --line: #cfd8d3;
+    --bezel: #22303c;
+    --ring: #19b5d8;      /* the Alexa light bar: the one bold colour */
+    --alert: #b4442c;
+    --font: "Atkinson Hyperlegible", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--tile); color: var(--ink); font: 17px/1.5 var(--font); }
+  .page { max-width: 1320px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 28px;
+          grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr); align-items: start; }
+  @media (max-width: 900px) { .page { grid-template-columns: 1fr; } }
+
+  /* device */
+  .device { background: var(--bezel); border-radius: 22px; padding: 18px 18px 0; }
+  .screen { position: relative; aspect-ratio: 16 / 10; background: var(--surface); border-radius: 6px; overflow: hidden; }
+  .screen iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--surface); }
+  .idle { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between; padding: 6% 7%; }
+  .idle .clock { font-size: clamp(28px, 5vw, 56px); font-weight: 700; letter-spacing: -0.01em; }
+  .idle .said { font-size: clamp(20px, 2.6vw, 30px); line-height: 1.3; max-width: 30ch; }
+  .idle .hint { color: var(--muted); font-size: 15px; }
+  .lightbar { height: 18px; display: flex; align-items: center; justify-content: center; }
+  .lightbar span { width: 38%; height: 4px; border-radius: 2px; background: var(--ring); opacity: 0; transition: opacity .2s; }
+  .device.listening .lightbar span, .device.speaking .lightbar span, .device.thinking .lightbar span { opacity: 1; }
+  @media (prefers-reduced-motion: no-preference) {
+    .device.listening .lightbar span { animation: breathe 1.2s ease-in-out infinite; }
+    .device.thinking .lightbar span { animation: sweep .9s linear infinite; }
+    @keyframes breathe { 50% { opacity: .35; } }
+    @keyframes sweep { 0% { transform: scaleX(.2); } 50% { transform: scaleX(1); } 100% { transform: scaleX(.2); } }
+  }
+  .under { margin-top: 18px; }
+  .under summary { cursor: pointer; color: var(--muted); }
+  .calls { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 8px; }
+  .calls li { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .calls .name { font-weight: 700; }
+  .calls .err { color: var(--alert); }
+  .calls pre { margin: 6px 0 0; font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;
+               word-break: break-word; max-height: 220px; overflow: auto; color: var(--muted); }
+
+  /* conversation */
+  .side h1 { font-size: 26px; line-height: 1.2; margin: 4px 0 4px; }
+  .mode { color: var(--muted); font-size: 15px; margin: 0 0 18px; }
+  .who { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; }
+  select, input[type=text], button { font: inherit; color: inherit; }
+  select { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  .log { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; min-height: 280px;
+         max-height: 52vh; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+  .log .empty { color: var(--muted); margin: auto; text-align: center; max-width: 28ch; }
+  .msg { max-width: 88%; padding: 9px 13px; border-radius: 14px; }
+  .msg.user { align-self: flex-end; background: var(--ink); color: var(--surface); border-bottom-right-radius: 4px; }
+  .msg.alexa { align-self: flex-start; background: var(--tile); border-bottom-left-radius: 4px; }
+  .msg .by { display: block; font-size: 13px; opacity: .75; }
+  .msg.error { background: #f6e2dd; color: var(--alert); }
+  .controls { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; margin-top: 12px; }
+  .mic { width: 52px; height: 52px; border-radius: 50%; border: 0; background: var(--ink); color: var(--surface); cursor: pointer; }
+  .mic[aria-pressed=true] { background: var(--ring); color: var(--ink); }
+  .mic svg { width: 22px; height: 22px; }
+  input[type=text] { background: var(--surface); border: 1px solid var(--line); border-radius: 26px; padding: 0 16px; min-width: 0; }
+  .say { border: 0; border-radius: 26px; padding: 0 18px; background: var(--ink); color: var(--surface); cursor: pointer; }
+  .say:disabled, .mic:disabled { opacity: .5; cursor: progress; }
+  .row { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; color: var(--muted); font-size: 15px; gap: 12px; flex-wrap: wrap; }
+  .link { background: none; border: 0; color: var(--ink); text-decoration: underline; cursor: pointer; padding: 0; }
+  :focus-visible { outline: 3px solid var(--ring); outline-offset: 2px; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<div class="page">
+  <section aria-label="Echo Show">
+    <div class="device" id="device">
+      <div class="screen" id="screen">
+        <div class="idle" id="idle">
+          <div class="clock" id="clock"></div>
+          <div class="said" id="said">Try “Alexa, Mochi just threw up.”</div>
+          <div class="hint">Cat Nanny add-on</div>
+        </div>
+      </div>
+      <div class="lightbar" aria-hidden="true"><span></span></div>
+    </div>
+    <details class="under" id="under">
+      <summary>Calls to the Cat Nanny MCP server</summary>
+      <ul class="calls" id="calls"></ul>
+    </details>
+  </section>
+
+  <section class="side" aria-label="Conversation">
+    <h1>Cat Nanny on Alexa+ (simulated)</h1>
+    <p class="mode" id="mode">Connecting…</p>
+    <div class="who">
+      <label for="speaker">Who’s talking</label>
+      <select id="speaker"><option>Alex</option><option>Sam</option><option>Jordan</option></select>
+    </div>
+    <div class="log" id="log" aria-live="polite"><p class="empty">Hold the microphone and talk, or type what you’d say to Alexa.</p></div>
+    <form class="controls" id="form">
+      <button type="button" class="mic" id="mic" aria-pressed="false" aria-label="Talk">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+      </button>
+      <label class="sr" for="text">What you say</label>
+      <input type="text" id="text" placeholder="Or type what you’d say to Alexa" autocomplete="off">
+      <button class="say" id="say">Say it</button>
+    </form>
+    <div class="row">
+      <label><input type="checkbox" id="speak" checked> Read replies aloud</label>
+      <button class="link" id="reset" type="button">New conversation</button>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var history = [];
+  var currentResult = null;
+  var frame = null;
+
+  function setState(state) {
+    $("device").className = "device" + (state ? " " + state : "");
+  }
+  function tick() {
+    $("clock").textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+  tick(); setInterval(tick, 15000);
+
+  fetch("/api/config").then(function (r) { return r.json(); }).then(function (c) {
+    $("mode").textContent = c.llm === "bedrock"
+      ? "Understanding speech with Amazon Bedrock (" + c.model + "). Server: " + c.mcp_url
+      : "Offline mode: only a few demo phrases are understood. Set BEDROCK_MODEL_ID to use a real model. Server: " + c.mcp_url;
+  });
+
+  function addMessage(role, text, by) {
+    var log = $("log");
+    var empty = log.querySelector(".empty"); if (empty) empty.remove();
+    var p = document.createElement("p");
+    p.className = "msg " + role;
+    if (by) { var b = document.createElement("span"); b.className = "by"; b.textContent = by; p.appendChild(b); }
+    p.appendChild(document.createTextNode(text));
+    log.appendChild(p);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function addCalls(steps) {
+    var list = $("calls");
+    steps.forEach(function (s) {
+      var li = document.createElement("li");
+      var name = document.createElement("div");
+      name.className = "name" + (s.is_error ? " err" : "");
+      name.textContent = s.tool + (s.is_error ? " (error)" : "");
+      var args = document.createElement("pre"); args.textContent = "arguments " + JSON.stringify(s.arguments, null, 2);
+      var res = document.createElement("pre"); res.textContent = "result " + JSON.stringify(s.result.structuredContent || s.result.content, null, 2);
+      li.appendChild(name); li.appendChild(args); li.appendChild(res);
+      list.insertBefore(li, list.firstChild);
+    });
+  }
+
+  function speak(text) {
+    if (!$("speak").checked || !("speechSynthesis" in window) || !text) { setState(""); return; }
+    var u = new SpeechSynthesisUtterance(text);
+    u.lang = "en-US";
+    u.onend = function () { setState(""); };
+    setState("speaking");
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  }
+
+  function showIdle(text) {
+    if (frame) { frame.remove(); frame = null; }
+    $("idle").hidden = false;
+    $("said").textContent = text;
+  }
+
+  /* MCP Apps host side: render the ui:// view and hand it the tool result. */
+  function showView(ui) {
+    if (frame) frame.remove();
+    $("idle").hidden = true;
+    currentResult = ui.tool_result;
+    frame = document.createElement("iframe");
+    frame.setAttribute("sandbox", "allow-scripts");
+    frame.setAttribute("title", "Add-on screen");
+    frame.srcdoc = ui.html;
+    $("screen").appendChild(frame);
+  }
+  window.addEventListener("message", function (e) {
+    if (!frame || e.source !== frame.contentWindow) return;
+    var m = e.data || {};
+    if (m.method === "ui/initialize") {
+      frame.contentWindow.postMessage({ jsonrpc: "2.0", id: m.id, result: {
+        protocolVersion: "2026-01-26",
+        hostInfo: { name: "cat-nanny-alexa-simulator", version: "0.1.0" },
+        hostCapabilities: {},
+        hostContext: { theme: "light", displayMode: "inline", platform: "web", deviceClass: "large" }
+      } }, "*");
+    } else if (m.method === "ui/notifications/initialized") {
+      frame.contentWindow.postMessage({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: currentResult }, "*");
+    }
+  });
+
+  function busy(on) { $("say").disabled = on; $("mic").disabled = on; }
+
+  function send(text) {
+    text = (text || "").trim();
+    if (!text) return;
+    var speaker = $("speaker").value;
+    addMessage("user", text, speaker);
+    setState("thinking"); busy(true);
+    fetch("/api/turn", { method: "POST", headers: { "Content-Type": "application/json" },
+                         body: JSON.stringify({ text: text, speaker: speaker, history: history }) })
+      .then(function (r) { if (!r.ok) throw new Error("The simulator returned " + r.status + ". Check that the MCP server is running."); return r.json(); })
+      .then(function (data) {
+        history = data.history;
+        addMessage("alexa", data.reply, "Alexa");
+        addCalls(data.steps);
+        if (data.ui) showView(data.ui); else showIdle(data.reply);
+        speak(data.reply);
+      })
+      .catch(function (err) { addMessage("alexa error", err.message, "Simulator"); setState(""); })
+      .finally(function () { busy(false); });
+  }
+
+  $("form").addEventListener("submit", function (e) { e.preventDefault(); var t = $("text").value; $("text").value = ""; send(t); });
+  $("reset").addEventListener("click", function () {
+    history = []; $("log").innerHTML = '<p class="empty">New conversation. Alexa has forgotten what was said, but Cat Nanny still has the log.</p>';
+    showIdle("Try “Alexa, Mochi just threw up.”");
+  });
+
+  /* Voice input (Chrome / Edge). Click to start, click again or pause to send. */
+  var Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Rec) { $("mic").disabled = true; $("mic").title = "Voice input needs Chrome or Edge"; return; }
+  var rec = new Rec(); rec.lang = "en-US"; rec.interimResults = true; rec.continuous = false;
+  var heard = "";
+  rec.onresult = function (e) {
+    heard = Array.prototype.map.call(e.results, function (r) { return r[0].transcript; }).join(" ");
+    $("text").value = heard;
+  };
+  rec.onend = function () {
+    $("mic").setAttribute("aria-pressed", "false"); setState("");
+    var t = heard.replace(/^\s*alexa[,\s]*/i, ""); heard = ""; $("text").value = "";
+    send(t);
+  };
+  $("mic").addEventListener("click", function () {
+    if ($("mic").getAttribute("aria-pressed") === "true") { rec.stop(); return; }
+    speechSynthesis && speechSynthesis.cancel();
+    heard = ""; $("mic").setAttribute("aria-pressed", "true"); setState("listening"); rec.start();
+  });
+})();
+</script>
+</body>
+</html>

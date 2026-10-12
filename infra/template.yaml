@@ -1,0 +1,120 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Cat Nanny - self-hosted MCP server for an Alexa+ add-on.
+  API Gateway HTTP API -> Lambda (MCP over Streamable HTTP, stateless JSON) -> DynamoDB, SNS email.
+
+Parameters:
+  HouseholdId:
+    Type: String
+    Default: demo
+    Description: The one household this demo serves (Alexa+ sends no user id without account linking).
+  HouseholdTz:
+    Type: String
+    Default: America/Los_Angeles
+    Description: IANA time zone used for "today".
+  AlertEmail:
+    Type: String
+    Description: Email that receives family alerts and the budget warning. Confirm the SNS subscription email once.
+  McpAuthToken:
+    Type: String
+    NoEcho: true
+    MinLength: 16
+    Description: Bearer token clients (the simulator) must send. Generate with `openssl rand -hex 24`.
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 10
+    Description: Email a warning when this month's AWS cost passes 80% of this.
+
+Resources:
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+
+  FamilyAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Cat Nanny
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlertEmail
+
+  McpFunctionLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-mcp
+      RetentionInDays: 14
+
+  McpFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: McpFunctionLogs
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-mcp
+      CodeUri: ../.build/lambda
+      Handler: cat_nanny.handler.handler
+      Runtime: python3.13
+      Architectures: [x86_64]
+      MemorySize: 512
+      Timeout: 29
+      Environment:
+        Variables:
+          STORE: dynamodb
+          TABLE_NAME: !Ref EventsTable
+          NOTIFIER: sns
+          SNS_TOPIC_ARN: !Ref FamilyAlertsTopic
+          HOUSEHOLD_ID: !Ref HouseholdId
+          HOUSEHOLD_TZ: !Ref HouseholdTz
+          MCP_AUTH_TOKEN: !Ref McpAuthToken
+          LOG_LEVEL: INFO
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref EventsTable
+        - Statement:
+            - Effect: Allow
+              Action: sns:Publish
+              Resource: !Ref FamilyAlertsTopic
+      Events:
+        Http:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+
+  CostBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+
+Outputs:
+  McpUrl:
+    Description: MCP endpoint (Streamable HTTP). Give this to the simulator as MCP_URL.
+    Value: !Sub https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/mcp
+  HealthUrl:
+    Value: !Sub https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/healthz
+  TableName:
+    Value: !Ref EventsTable
+  FamilyAlertsTopicArn:
+    Value: !Ref FamilyAlertsTopic
+  LogGroup:
+    Value: !Ref McpFunctionLogs
