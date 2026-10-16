@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add a photo</title>
+<!-- Ported from CatNannyFramework upload.html / upload.js. Self-contained: the phone opens this
+     page from the link Cat Nanny gave, uploads straight to the storage target, then registers it. -->
+<style>
+  :root { --ink:#1c2b3a; --muted:#5e6b73; --line:#cfd8d3; --tile:#e7ede9; --surface:#fafcfb; --accent:#19b5d8; --alert:#b4442c; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--tile); color:var(--ink); font:17px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  main { max-width:520px; margin:0 auto; padding:28px 16px 48px; }
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:22px; }
+  h1 { font-size:24px; line-height:1.2; margin:0 0 6px; }
+  .muted { color:var(--muted); font-size:15px; margin:0 0 18px; }
+  .picker { display:block; border:2px dashed var(--line); border-radius:12px; padding:26px 16px; text-align:center; cursor:pointer; }
+  .picker strong { display:block; margin-bottom:4px; }
+  .picker span { color:var(--muted); font-size:14px; }
+  .picker input { display:none; }
+  img { display:block; max-width:100%; max-height:280px; margin:14px auto 0; border-radius:10px; }
+  .notice { margin-top:14px; padding:10px 12px; border-radius:10px; background:#e3f3f7; font-size:15px; }
+  .notice.error { background:#f6e2dd; color:var(--alert); }
+  button { width:100%; margin-top:16px; border:0; border-radius:26px; padding:14px; background:var(--ink); color:var(--surface); font:inherit; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  .foot { color:var(--muted); font-size:13px; margin-top:18px; }
+  :focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>Add a photo to this observation</h1>
+    <p class="muted" id="event">Finding the observation…</p>
+    <label class="picker" for="file">
+      <strong>Choose a photo or take one</strong>
+      <span>JPEG, PNG or WebP · up to 8 MB</span>
+      <input id="file" type="file" accept="image/jpeg,image/png,image/webp" disabled>
+    </label>
+    <img id="preview" alt="Photo preview" hidden>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <button id="submit" disabled>Upload and attach</button>
+    <p class="foot">This link was shown on screen by Cat Nanny. Nothing was texted or emailed.</p>
+  </div>
+</main>
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var eventId = new URLSearchParams(location.search).get("event_id");
+  var valid = false, previewUrl = null;
+  var LABEL = { vomit: "Vomiting", appetite: "Appetite" };
+
+  function notice(text, isError) { var n = $("notice"); n.textContent = text; n.className = "notice" + (isError ? " error" : ""); n.hidden = false; }
+
+  async function init() {
+    if (!eventId) { notice("This link has no observation. Ask Cat Nanny for the photo link again.", true); return; }
+    try {
+      var r = await fetch("/photos/event?event_id=" + encodeURIComponent(eventId));
+      if (!r.ok) throw new Error();
+      var e = await r.json();
+      $("event").textContent = e.cat_name + " · " + (LABEL[e.event_type] || e.event_type) + " · " + new Date(e.occurred_at).toLocaleString("en-US");
+      valid = true; $("file").disabled = false;
+    } catch (err) { notice("Observation not found, or the service is unavailable. Reopen the link from the conversation.", true); }
+  }
+
+  $("file").addEventListener("change", function () {
+    var file = $("file").files[0];
+    $("submit").disabled = true; $("notice").hidden = true; $("preview").hidden = true;
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    if (!file) return;
+    if (["image/jpeg", "image/png", "image/webp"].indexOf(file.type) < 0 || file.size === 0 || file.size > 8 * 1024 * 1024) {
+      notice("Choose a JPEG, PNG, or WebP image up to 8 MB.", true); return;
+    }
+    previewUrl = URL.createObjectURL(file); $("preview").src = previewUrl; $("preview").hidden = false;
+    $("submit").disabled = !valid;
+  });
+
+  $("submit").addEventListener("click", async function () {
+    var file = $("file").files[0];
+    if (!valid || !file) return;
+    $("submit").disabled = true; $("submit").textContent = "Uploading…";
+    try {
+      var t = await fetch("/photos/upload-target?event_id=" + encodeURIComponent(eventId) + "&content_type=" + encodeURIComponent(file.type));
+      var target = await t.json();
+      if (!t.ok) throw new Error(target.detail || "Could not start the upload.");
+      var put = await fetch(target.url, { method: target.method, headers: target.headers, body: file });
+      if (!put.ok) throw new Error("Upload did not complete. Please retry.");
+      var done = await fetch("/photos/complete", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_id: eventId, storage_key: target.storage_key }) });
+      var result = await done.json();
+      if (!done.ok) throw new Error(result.detail || "Could not attach the photo. Please retry.");
+      notice("Photo uploaded and attached to this observation. You can close this page.");
+      $("submit").textContent = "Uploaded"; $("file").value = "";
+      try { localStorage.setItem("catnanny.photo-uploaded", JSON.stringify({ eventId: eventId, at: Date.now() })); } catch (e) {}
+      try { if (window.opener) window.opener.postMessage({ type: "catnanny:photo-uploaded", eventId: eventId }, "*"); } catch (e) {}
+    } catch (err) {
+      notice(err.message || "Upload did not complete. Please try again.", true);
+      $("submit").disabled = false; $("submit").textContent = "Retry upload";
+    }
+  });
+
+  init();
+})();
+</script>
+</body>
+</html>
