@@ -1,6 +1,6 @@
 """AWS Lambda entry point (API Gateway HTTP API -> ASGI app).
 
-The MCP server (tools, DynamoDB and SNS clients) is built once per Lambda
+The MCP server (tools, DynamoDB and S3 clients) is built once per Lambda
 container. The MCP SDK's HTTP session manager can only be started once, so each
 invocation wraps the server in a fresh, cheap HTTP app and Mangum runs its
 startup/shutdown around that single stateless request.

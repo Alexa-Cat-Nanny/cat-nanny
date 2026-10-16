@@ -5,18 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Vet summary</title>
 <!--
-  MCP Apps view for get_vet_summary. Self-contained (no network), as Alexa+ requires.
-  The host renders it in a sandboxed iframe and sends the tool result over postMessage.
-  The bridge at the bottom is a minimal hand-written version of the MCP Apps protocol
+  MCP Apps view for get_vet_summary. Self-contained (no network except photo URLs), as Alexa+ requires.
+  The host renders it in a sandboxed iframe and sends the tool result over postMessage
   (ui/initialize -> ui/notifications/initialized -> ui/notifications/tool-result).
-  TODO(ui): switch to the official App class from @modelcontextprotocol/ext-apps,
-  bundled into this single file (vite + vite-plugin-singlefile).
+  Layout follows CatNannyFramework's care report: counts, then a timeline with details and photos.
 -->
 <style>
   :root {
     --bg: #fbfaf7; --card: #ffffff; --ink: #1f1d1a; --muted: #6b675f; --line: #e6e2d9;
-    --vomit: #c2543a; --appetite: #b7791f; --litter: #2f6f9f; --energy: #6a5acd; --food: #2e7d5b; --vet: #444;
-    --flag-bg: #fdecea; --flag-ink: #8a2a1b;
+    --vomit: #c2543a; --appetite: #b7791f; --flag-bg: #fdecea; --flag-ink: #8a2a1b;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) { --bg:#16150f; --card:#1f1e18; --ink:#f1eee6; --muted:#a9a49a; --line:#33312a; --flag-bg:#3a1d17; --flag-ink:#f3b6a8; }
@@ -28,24 +25,18 @@
   header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
   h1 { font-size: 24px; margin: 0; font-weight: 600; }
   .range { color: var(--muted); font-size: 14px; }
-  .timeline { display: grid; grid-template-columns: repeat(30, minmax(0, 1fr)); gap: 3px; margin-bottom: 6px; }
-  .day { aspect-ratio: 1 / 1.4; background: var(--card); border: 1px solid var(--line); border-radius: 4px;
-         display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 2px; padding: 3px 0; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; }
-  .dot.vomit { background: var(--vomit); } .dot.appetite { background: var(--appetite); border-radius: 2px; }
-  .dot.litter { background: var(--litter); transform: rotate(45deg); border-radius: 1px; }
-  .dot.energy { background: var(--energy); } .dot.food_change { background: var(--food); width: 100%; height: 3px; border-radius: 0; }
-  .dot.vet_visit { background: var(--vet); } .dot.medication { display: none; }
-  .axis { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-bottom: 16px; }
-  .legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: 13px; margin-bottom: 18px; }
-  .legend span { display: inline-flex; align-items: center; gap: 6px; }
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 16px; }
   .stat { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
   .stat .label { color: var(--muted); font-size: 13px; }
   .stat .value { font-size: 26px; font-weight: 600; margin-top: 2px; }
   .stat .sub { color: var(--muted); font-size: 13px; }
-  .flags { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-  .flags li { background: var(--flag-bg); color: var(--flag-ink); border-radius: 8px; padding: 8px 12px; font-size: 14px; }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 9px 12px; border-top: 1px solid var(--line); vertical-align: top; font-size: 14px; }
+  th { color: var(--muted); font-weight: 500; border-top: 0; }
+  .type { font-weight: 600; }
+  .type.vomit { color: var(--vomit); } .type.appetite { color: var(--appetite); }
+  .photos img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; margin-right: 4px; }
+  .open { color: var(--muted); font-size: 12px; }
   .note { color: var(--muted); font-size: 12px; margin-top: 14px; }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
 </style>
@@ -55,75 +46,74 @@
 <script>
 (function () {
   "use strict";
-  var LABELS = { vomit: "Vomiting", appetite: "Appetite", litter: "Litter box", energy: "Low energy", food_change: "Food change", vet_visit: "Vet visit" };
+  var LABELS = { vomit: "Vomiting", appetite: "Appetite" };
+  var FIELD = { content: "Content", has_blood: "Blood", episode_count: "Episodes", low_energy: "Low energy",
+                minutes_after_meal: "Min after meal", status: "Status", hours_since_food: "Hours since food" };
 
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
-  function fmt(d) { return new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }); }
+  function when(iso) { var d = new Date(iso); return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
+  function fmtDetails(details) {
+    var parts = [];
+    Object.keys(details || {}).forEach(function (k) {
+      var v = details[k];
+      if (v === null || v === undefined) return;
+      if (v === true) v = "yes"; else if (v === false) v = "no";
+      parts.push((FIELD[k] || k) + ": " + String(v).replace(/_/g, " "));
+    });
+    return parts.join(" · ") || "No details yet";
+  }
 
   function render(data) {
-    var s = data && data.summary;
     var root = document.getElementById("app");
     root.textContent = "";
-    if (!s) { root.appendChild(el("p", "empty", "No summary data.")); return; }
+    if (!data || !data.timeline) { root.appendChild(el("p", "empty", "No summary data.")); return; }
 
     var header = el("header");
-    header.appendChild(el("h1", null, s.cat_name + " · last " + s.days + " days"));
-    header.appendChild(el("span", "range", fmt(s.start) + " – " + fmt(s.end)));
+    header.appendChild(el("h1", null, data.cat + " · last " + data.days + " days"));
+    header.appendChild(el("span", "range", when(data.start) + " – " + when(data.end)));
     root.appendChild(header);
 
-    var grid = el("div", "timeline");
-    grid.style.gridTemplateColumns = "repeat(" + s.timeline.length + ", minmax(0, 1fr))";
-    s.timeline.forEach(function (cell) {
-      var day = el("div", "day");
-      day.title = fmt(cell.day);
-      Object.keys(cell.counts).forEach(function (type) {
-        for (var i = 0; i < Math.min(cell.counts[type], 3); i++) day.appendChild(el("span", "dot " + type));
-      });
-      grid.appendChild(day);
-    });
-    root.appendChild(grid);
-    var axis = el("div", "axis");
-    axis.appendChild(el("span", null, fmt(s.start)));
-    axis.appendChild(el("span", null, "today"));
-    root.appendChild(axis);
-
-    var legend = el("div", "legend");
-    ["vomit", "appetite", "litter", "energy", "food_change", "vet_visit"].forEach(function (t) {
-      var item = el("span"); item.appendChild(el("span", "dot " + t)); item.appendChild(document.createTextNode(LABELS[t])); legend.appendChild(item);
-    });
-    root.appendChild(legend);
-
     var stats = el("div", "stats");
-    (s.comparisons || []).forEach(function (c) {
+    var prev = {};
+    (data.comparisons || []).forEach(function (c) { prev[c.event_type] = c.previous; });
+    ["vomit", "appetite"].forEach(function (t) {
       var card = el("div", "stat");
-      card.appendChild(el("div", "label", LABELS[c.event_type] || c.event_type));
-      card.appendChild(el("div", "value", String(c.current)));
-      card.appendChild(el("div", "sub", "vs " + c.previous + " in the " + s.days + " days before"));
+      card.appendChild(el("div", "label", LABELS[t]));
+      card.appendChild(el("div", "value", String(data.counts[t] || 0)));
+      card.appendChild(el("div", "sub", "vs " + (prev[t] || 0) + " in the " + data.days + " days before"));
       stats.appendChild(card);
     });
-    if (s.weight) {
-      var w = el("div", "stat");
-      w.appendChild(el("div", "label", "Weight"));
-      w.appendChild(el("div", "value", s.weight.last_kg + " kg"));
-      w.appendChild(el("div", "sub", "from " + s.weight.first_kg + " kg (" + (s.weight.change_pct > 0 ? "+" : "") + s.weight.change_pct + "%)"));
-      stats.appendChild(w);
-    }
-    (s.food_changes || []).forEach(function (f) {
-      var card = el("div", "stat");
-      card.appendChild(el("div", "label", "Food change"));
-      card.appendChild(el("div", "value", fmt(f.date)));
-      card.appendChild(el("div", "sub", (f.from || "?") + " → " + (f.to || "?")));
-      stats.appendChild(card);
-    });
+    var total = el("div", "stat");
+    total.appendChild(el("div", "label", "All observations"));
+    total.appendChild(el("div", "value", String(data.counts.total_events || 0)));
+    total.appendChild(el("div", "sub", "logged by the family"));
+    stats.appendChild(total);
     root.appendChild(stats);
 
-    var alerts = data.alerts_in_period || [];
-    if (alerts.length) {
-      var list = el("ul", "flags");
-      alerts.forEach(function (a) { list.appendChild(el("li", null, a.message)); });
-      root.appendChild(list);
+    if (data.timeline.length) {
+      var table = el("table");
+      var head = el("tr");
+      ["When", "Type", "Details", "By", "Photos"].forEach(function (h) { head.appendChild(el("th", null, h)); });
+      table.appendChild(head);
+      data.timeline.forEach(function (o) {
+        var tr = el("tr");
+        tr.appendChild(el("td", null, when(o.occurred_at)));
+        var type = el("td"); type.appendChild(el("span", "type " + o.event_type, LABELS[o.event_type] || o.event_type));
+        if (o.status !== "completed") type.appendChild(el("div", "open", "follow-up open"));
+        tr.appendChild(type);
+        tr.appendChild(el("td", null, fmtDetails(o.details)));
+        tr.appendChild(el("td", null, o.reporter || "—"));
+        var photos = el("td", "photos");
+        (o.photos || []).forEach(function (p) { var img = el("img"); img.src = p.url; img.alt = "Photo"; photos.appendChild(img); });
+        if (!(o.photos || []).length) photos.appendChild(el("span", "open", "—"));
+        tr.appendChild(photos);
+        table.appendChild(tr);
+      });
+      root.appendChild(table);
+    } else {
+      root.appendChild(el("p", "empty", "Nothing logged in this period."));
     }
-    root.appendChild(el("p", "note", "Observations logged by the family. Not a diagnosis."));
+    root.appendChild(el("p", "note", data.safety_note || "Observations logged by the family. Not a diagnosis."));
     reportSize();
   }
 
@@ -133,9 +123,7 @@
   function reportSize() {
     send({ method: "ui/notifications/size-changed", params: { width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight } });
   }
-  function applyContext(ctx) {
-    if (ctx && ctx.theme) document.documentElement.setAttribute("data-theme", ctx.theme);
-  }
+  function applyContext(ctx) { if (ctx && ctx.theme) document.documentElement.setAttribute("data-theme", ctx.theme); }
   var initId = nextId++;
   window.addEventListener("message", function (event) {
     var m = event.data;
@@ -149,7 +137,7 @@
       applyContext(m.params);
     }
   });
-  send({ id: initId, method: "ui/initialize", params: { protocolVersion: "2026-01-26", appInfo: { name: "cat-nanny-vet-summary", version: "0.1.0" }, appCapabilities: {} } });
+  send({ id: initId, method: "ui/initialize", params: { protocolVersion: "2026-01-26", appInfo: { name: "cat-nanny-vet-summary", version: "0.2.0" }, appCapabilities: {} } });
 })();
 </script>
 </body>
