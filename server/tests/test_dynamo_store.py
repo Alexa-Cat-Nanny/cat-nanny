@@ -6,10 +6,10 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from cat_nanny.demo_data import MOCHI, demo_events
-from cat_nanny.store import Alert, DynamoStore, new_id
+from cat_nanny.demo_data import JEREMY, MOCHI, demo_records, seed_store
+from cat_nanny.store import Caregiver, DynamoStore, Photo, Reassignment, find_cat_by_name, new_id
 
-NOW = datetime(2026, 10, 12, 16, 0, tzinfo=UTC)
+NOW = datetime(2026, 10, 15, 16, 0, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -25,26 +25,40 @@ def store():
         yield DynamoStore("cat-nanny-test", table=table)
 
 
-def test_cats_events_alerts_roundtrip(store):
-    store.put_cat("demo", MOCHI)
-    assert store.get_cat("demo", "mochi") == MOCHI
-    assert [c.name for c in store.list_cats("demo")] == ["Mochi"]
+def test_cats_and_caregivers(store):
+    seed_store(store, "demo", now=NOW)
+    assert [c.name for c in store.list_cats("demo")] == ["Jeremy", "Mochi"]
+    assert store.get_cat("demo", "cat-mochi") == MOCHI
+    assert find_cat_by_name(store, "demo", "MOCHI") == MOCHI
+    assert [p.name for p in store.list_caregivers("demo")] == ["Alex", "Sam"]
+    store.put_caregiver("demo", Caregiver(caregiver_id="p-x", name="Jordan"))
+    assert len(store.list_caregivers("demo")) == 3
 
-    events = demo_events(NOW)
-    for e in events:
-        store.put_event("demo", e)
-    last_week = store.query_events("demo", "mochi", NOW - timedelta(days=7), NOW)
-    assert last_week and all(NOW - timedelta(days=7) <= e.ts <= NOW for e in last_week)
-    assert last_week == sorted(last_week, key=lambda e: e.ts)
-    weight = [e for e in last_week if e.type == "weight"][0]
-    assert weight.details["kg"] == 4.0 and isinstance(weight.details["kg"], float)
 
-    got = store.get_event("demo", "mochi", last_week[0].event_id)
-    assert got == last_week[0]
+def test_observations_roundtrip_and_time_range(store):
+    seed_store(store, "demo", now=NOW)
+    records = demo_records(NOW)
+    week = store.query_observations("demo", "cat-mochi", NOW - timedelta(days=7), NOW)
+    assert [r.event.ts for r in week] == [r.event.ts for r in records if r.event.cat_id == "cat-mochi"]
+    assert week[1].status == "awaiting_answer"
+    assert week[1].event.details["minutes_after_meal"] == 15 and isinstance(week[1].event.details["minutes_after_meal"], int)
+    assert store.query_observations("demo", "cat-mochi", NOW - timedelta(days=3), NOW)[0].event.event_id == week[1].event.event_id
+    got = store.get_observation("demo", week[0].event.event_id)
+    assert got == week[0]
+    assert store.get_observation("demo", "missing") is None
 
-    a = Alert(alert_id=new_id(NOW), cat_id="mochi", level="vet_today", message="m", created_at=NOW, rule_id="r")
-    store.put_alert("demo", a)
-    assert [x.alert_id for x in store.list_alerts("demo", "mochi", NOW - timedelta(hours=1))] == [a.alert_id]
-    store.put_alert("demo", a.model_copy(update={"acknowledged": True}))
-    assert store.list_alerts("demo", "mochi", NOW - timedelta(hours=1)) == []
-    assert len(store.list_alerts("demo", "mochi", NOW - timedelta(hours=1), open_only=False)) == 1
+
+def test_move_observation_carries_photos_and_keeps_id(store):
+    seed_store(store, "demo", now=NOW)
+    event_id = store.query_observations("demo", "cat-mochi", NOW - timedelta(days=7))[0].event.event_id
+    store.put_photo("demo", Photo(photo_id="p1", event_id=event_id, cat_id="cat-mochi", storage_key="k/p1.jpg",
+                                  content_type="image/jpeg", uploaded_at=NOW))
+    moved = store.move_observation("demo", event_id, JEREMY.cat_id)
+    assert moved.event.event_id == event_id and moved.event.cat_id == "cat-jeremy"
+    assert store.get_observation("demo", event_id).event.cat_id == "cat-jeremy"
+    assert [r.event.event_id for r in store.query_observations("demo", "cat-mochi", NOW - timedelta(days=7))] != [event_id]
+    assert any(r.event.event_id == event_id for r in store.query_observations("demo", "cat-jeremy", NOW - timedelta(days=7)))
+    assert store.list_photos("demo", event_id)[0].cat_id == "cat-jeremy"
+    store.put_reassignment("demo", Reassignment(reassignment_id=new_id(NOW), event_id=event_id, from_cat_id="cat-mochi",
+                                                to_cat_id="cat-jeremy", reporter="Alex", reason="misspoke", corrected_at=NOW))
+    assert store.list_reassignments("demo", event_id)[0].to_cat_id == "cat-jeremy"
