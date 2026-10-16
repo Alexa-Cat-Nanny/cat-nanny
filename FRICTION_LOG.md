@@ -91,3 +91,11 @@ One entry per problem; keep it factual.
 - **Severity:** minor
 - **Workaround:** The view switches to a compact layout when `deviceClass` is `small`; the simulator renders the view at Echo Show proportions.
 - **Suggestion:** Publish the viewport sizes per device class and a preview tool.
+
+### First Bedrock call fails until an "Anthropic use case details" form is submitted
+- **Date / who:** 2026-10-16
+- **Tool / doc:** Amazon Bedrock Converse API
+- **Actual:** `ResourceNotFoundException: Model use case details have not been submitted for this account. Fill out the Anthropic use case details form before using the model. If you have already filled out the form, try again in 15 minutes.` Nothing in the getting-started flow mentions the form; the error is also the wrong class (the model exists, access is pending).
+- **Severity:** major (blocks the first run)
+- **Workaround:** Bedrock console > Model catalog > the Claude model > submit the use case form; wait 15 minutes. The simulator now shows Bedrock's own message on the page instead of a generic 500.
+- **Suggestion:** Surface the form during model enablement and return an access-denied class error.

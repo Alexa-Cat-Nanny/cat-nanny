@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -95,6 +96,10 @@ async def turn(body: TurnIn) -> dict[str, Any]:
                     break
     except (MCPError, OSError) as exc:
         raise HTTPException(502, f"The Cat Nanny MCP server is not reachable at {MCP_URL}: {exc}") from exc
+    except BotoCoreError as exc:  # Bedrock: no credentials, no region, model access, throttling, ...
+        raise HTTPException(502, f"Bedrock ({MODEL_ID}): {exc}") from exc
+    except ClientError as exc:
+        raise HTTPException(502, f"Bedrock ({MODEL_ID}): {exc.response.get('Error', {}).get('Message', exc)}") from exc
     return {"reply": result.reply, "history": history_is_json_safe(result.history),
             "steps": summarize_steps(result.steps), "ui": ui}
 
