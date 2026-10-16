@@ -34,12 +34,14 @@ class McpBridge:
     async def __aenter__(self) -> McpBridge:
         self._stack = AsyncExitStack()
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
-        http = await self._stack.enter_async_context(httpx2.AsyncClient(headers=headers, timeout=30))
+        # A local server must not go through the machine's HTTP proxy settings (common on Windows).
+        local = any(h in self.url for h in ("://127.0.0.1", "://localhost", "://[::1]"))
+        http = await self._stack.enter_async_context(httpx2.AsyncClient(headers=headers, timeout=30, trust_env=not local))
         self.client = await self._stack.enter_async_context(
             Client(
                 streamable_http_client(self.url, http_client=http),
                 mode="legacy",
-                client_info=Implementation(name="Cat Nanny Alexa+ simulator", version="0.1.0"),
+                client_info=Implementation(name="Cat Nanny Alexa+ simulator", version="0.2.0"),
                 extensions=[advertise(APPS_EXTENSION, {"mimeTypes": [APP_MIME]})],
             )
         )

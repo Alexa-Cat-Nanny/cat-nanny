@@ -39,6 +39,17 @@
   .open { color: var(--muted); font-size: 12px; }
   .note { color: var(--muted); font-size: 12px; margin-top: 14px; }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  /* Small devices (an Echo Show 5-class screen): tighter type and spacing. */
+  :root[data-compact] body { font-size: 12px; }
+  :root[data-compact] main { padding: 10px 12px; }
+  :root[data-compact] h1 { font-size: 16px; }
+  :root[data-compact] .range { font-size: 11px; }
+  :root[data-compact] .stats { grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 8px; }
+  :root[data-compact] .stat { padding: 6px 8px; }
+  :root[data-compact] .stat .value { font-size: 18px; }
+  :root[data-compact] .stat .label, :root[data-compact] .stat .sub { font-size: 11px; }
+  :root[data-compact] th, :root[data-compact] td { padding: 5px 7px; font-size: 11px; }
+  :root[data-compact] .photos img { width: 36px; height: 36px; }
 </style>
 </head>
 <body>
@@ -123,7 +134,11 @@
   function reportSize() {
     send({ method: "ui/notifications/size-changed", params: { width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight } });
   }
-  function applyContext(ctx) { if (ctx && ctx.theme) document.documentElement.setAttribute("data-theme", ctx.theme); }
+  function applyContext(ctx) {
+    if (!ctx) return;
+    if (ctx.theme) document.documentElement.setAttribute("data-theme", ctx.theme);
+    if (ctx.deviceClass === "small") document.documentElement.setAttribute("data-compact", "");
+  }
   var initId = nextId++;
   window.addEventListener("message", function (event) {
     var m = event.data;

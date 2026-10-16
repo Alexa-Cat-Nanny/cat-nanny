@@ -1,0 +1,10 @@
+/* Additions on top of the CatNannyFramework styles: the MCP Apps screen and the call log. */
+.show-app { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fbfaf7; z-index: 2; }
+.calls { margin-top: 10px; font-size: 12px; color: #667d6a; }
+.calls summary { cursor: pointer; }
+.calls ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.calls li { background: #f6f8f1; border: 1px solid #d5dfd1; border-radius: 8px; padding: 8px 10px; }
+.calls .name { font-weight: 600; color: #2f6249; }
+.calls .name.err { color: #b4442c; }
+.calls pre { margin: 4px 0 0; font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; }
+.message.alexa .flag { display: block; color: #b4442c; font-weight: 600; }
