@@ -1,0 +1,34 @@
+# Exact Linux x86_64 / Python 3.13 package set for the Lambda bundle, installed with --no-deps by scripts/build_lambda.py.
+# Pinned so the build is the same on Windows, macOS and Linux (pip evaluates dependency markers such as
+# 'pywin32; sys_platform == "win32"' against the build machine, which breaks cross-platform resolution).
+# Regenerate after changing server/requirements.txt: python scripts/build_lambda.py --lock (on Linux).
+annotated_types==0.8.0
+anyio==4.15.1
+attrs==26.1.0
+cffi==2.1.1
+click==8.5.0
+cryptography==50.0.2
+h11==0.16.0
+httpcore2==2.13.1
+httpx2==2.13.1
+idna==3.20
+jsonschema==4.26.0
+jsonschema_specifications==2025.9.1
+mangum==0.22.0
+mcp==2.2.0
+mcp_types==2.2.0
+opentelemetry_api==1.45.1
+pycparser==3.11
+pydantic==2.14.1
+pydantic_core==2.50.1
+pyjwt==2.15.1
+python_multipart==0.0.32
+referencing==0.37.0
+rpds_py==2026.9.1
+sse_starlette==3.5.0
+starlette==1.8.0
+truststore==0.10.5
+typing_extensions==4.16.0
+typing_inspection==0.4.4
+tzdata==2026.5
+uvicorn==0.54.0
