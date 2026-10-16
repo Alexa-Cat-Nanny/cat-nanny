@@ -7,6 +7,7 @@ server runs with no AWS account. On Lambda the SAM template sets the AWS values.
 from __future__ import annotations
 
 import os
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -31,8 +32,10 @@ class Settings:
     photo_bucket: str = ""
     photo_dir: str = "uploads"
     """Local photo files (photos=local)."""
-    public_base_url: str = "http://127.0.0.1:8000"
-    """Where phones reach this server (upload page and local photo files)."""
+    public_base_url: str = ""
+    """Where phones reach this server (upload page and local photo files). Empty: use the URL each
+    request came in on (API Gateway's host on Lambda, 127.0.0.1 locally). Set it when phones must use
+    another address, e.g. the laptop's LAN IP."""
     household_id: str = "demo"
     """Alexa+ passes no user or household id to the server, so the demo serves one household.
     Account linking (OAuth) is what would identify the household in production."""
@@ -52,6 +55,14 @@ class Settings:
     def photo_root(self) -> Path:
         return Path(self.photo_dir)
 
+    def base_url(self) -> str:
+        """The URL to build phone-facing links with, for the request being handled."""
+        return self.public_base_url or request_base_url.get() or "http://127.0.0.1:8000"
+
+
+request_base_url: ContextVar[str | None] = ContextVar("request_base_url", default=None)
+"""Scheme + host of the request being handled (set by the ASGI app), used when PUBLIC_BASE_URL is not set."""
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -61,7 +72,7 @@ def get_settings() -> Settings:
         photos=_env("PHOTOS", "local"),
         photo_bucket=_env("PHOTO_BUCKET", ""),
         photo_dir=_env("PHOTO_DIR", "uploads"),
-        public_base_url=_env("PUBLIC_BASE_URL", "http://127.0.0.1:8000").rstrip("/"),
+        public_base_url=_env("PUBLIC_BASE_URL", "").rstrip("/"),
         household_id=_env("HOUSEHOLD_ID", "demo"),
         household_tz=_env("HOUSEHOLD_TZ", "America/Los_Angeles"),
         auth_token=_env("MCP_AUTH_TOKEN", ""),

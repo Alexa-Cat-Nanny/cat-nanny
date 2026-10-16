@@ -180,7 +180,7 @@ def build_server(store: Store, photo_storage: PhotoStorage, settings: Settings,
     now_fn = clock or (lambda: datetime.now(UTC))
     household = settings.household_id
     tz = settings.tz
-    base_url = settings.public_base_url
+    base_url = settings.base_url  # per request: API Gateway's host on Lambda, or PUBLIC_BASE_URL
     apps = Apps()
 
     # helpers -------------------------------------------------------------------------
@@ -211,10 +211,10 @@ def build_server(store: Store, photo_storage: PhotoStorage, settings: Settings,
         return min(ts, now)
 
     def upload_url(event_id: str) -> str:
-        return f"{base_url}/photos/upload?event_id={event_id}"
+        return f"{base_url()}/photos/upload?event_id={event_id}"
 
     def photo_views(event_id: str) -> list[PhotoView]:
-        return [PhotoView(photo_id=p.photo_id, url=photo_storage.view_url(p.storage_key, base_url), uploaded_at=local(p.uploaded_at))
+        return [PhotoView(photo_id=p.photo_id, url=photo_storage.view_url(p.storage_key, base_url()), uploaded_at=local(p.uploaded_at))
                 for p in store.list_photos(household, event_id)]
 
     def view(record: ObservationRecord, cat: CatProfile | None = None) -> ObservationView:

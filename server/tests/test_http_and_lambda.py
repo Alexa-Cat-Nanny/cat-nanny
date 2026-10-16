@@ -125,6 +125,16 @@ def test_lambda_handler_end_to_end(monkeypatch):
     body = resp["body"] if not resp.get("isBase64Encoded") else base64.b64decode(resp["body"]).decode()
     assert json.loads(body)["result"]["structuredContent"]["cat"] == "Mochi"
 
+    # Links for phones are built on API Gateway's own host (no PUBLIC_BASE_URL needed on Lambda).
+    call = {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {"name": "log_observation", "arguments": {"cat": "Mochi", "event_type": "appetite", "details": {"status": "eating_less"}}}}
+    event = _apigw_event(call)
+    event["headers"]["x-forwarded-proto"] = "https"
+    resp = handler_mod.handler(event, None)
+    body = resp["body"] if not resp.get("isBase64Encoded") else base64.b64decode(resp["body"]).decode()
+    assert json.loads(body)["result"]["structuredContent"]["photo_upload_url"].startswith(
+        "https://abc.execute-api.us-east-1.amazonaws.com/photos/upload?event_id=")
+
 
 PNG_1PX = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
 

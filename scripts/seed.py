@@ -1,6 +1,7 @@
-"""Load 60 days of sample history (source="seed") for Mochi into the deployed DynamoDB table.
+"""Load the demo household (Mochi, Jeremy, two caregivers, a few observations) into the deployed DynamoDB table.
 
-Usage:  TABLE_NAME=<from stack outputs> python scripts/seed.py
+Usage:  TABLE_NAME=<from stack outputs> AWS_REGION=us-east-1 python scripts/seed.py
+Running it twice is safe: the same cats and caregivers are overwritten, observations get new ids.
 """
 
 import os
@@ -15,5 +16,6 @@ from cat_nanny.store import DynamoStore  # noqa: E402
 table = os.environ.get("TABLE_NAME")
 if not table:
     sys.exit("Set TABLE_NAME (see the stack outputs).")
-count = seed_store(DynamoStore(table), os.environ.get("HOUSEHOLD_ID", "demo"))
-print(f"Seeded Mochi with {count} sample events into {table}.")
+household = os.environ.get("HOUSEHOLD_ID", "demo")
+count = seed_store(DynamoStore(table), household)
+print(f"Seeded household {household!r} with Mochi, Jeremy and {count} observations into {table}.")

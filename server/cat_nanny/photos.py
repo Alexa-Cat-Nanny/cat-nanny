@@ -88,8 +88,10 @@ class S3PhotoStorage:
     def __init__(self, bucket: str, client: Any = None, url_ttl_seconds: int = 3600) -> None:
         if client is None:
             import boto3
+            from botocore.config import Config
 
-            client = boto3.client("s3")
+            # Signature V4 is required for presigned URLs on buckets created after 2020 (V2 is rejected).
+            client = boto3.client("s3", config=Config(signature_version="s3v4"))
         self._s3 = client
         self.bucket = bucket
         self.ttl = url_ttl_seconds

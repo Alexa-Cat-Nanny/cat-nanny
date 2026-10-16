@@ -2,7 +2,8 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
   Cat Nanny - self-hosted MCP server for an Alexa+ add-on.
-  API Gateway HTTP API -> Lambda (MCP over Streamable HTTP, stateless JSON) -> DynamoDB, SNS email.
+  API Gateway HTTP API -> Lambda (MCP over Streamable HTTP, stateless JSON) -> DynamoDB (records) + S3 (photos).
+  Conversations are driven by Amazon Bedrock from the simulator (see simulator/), which calls this API as an MCP client.
 
 Parameters:
   HouseholdId:
@@ -12,22 +13,27 @@ Parameters:
   HouseholdTz:
     Type: String
     Default: America/Los_Angeles
-    Description: IANA time zone used for "today".
-  AlertEmail:
-    Type: String
-    Description: Email that receives family alerts and the budget warning. Confirm the SNS subscription email once.
+    Description: IANA time zone used for the times spoken and shown.
   McpAuthToken:
     Type: String
     NoEcho: true
     MinLength: 16
     Description: Bearer token clients (the simulator) must send. Generate with `openssl rand -hex 24`.
+  AllowedOrigins:
+    Type: String
+    Default: "http://127.0.0.1:8080,http://localhost:8080"
+    Description: Comma-separated browser origins allowed to call /mcp (the simulator). Server-to-server calls send no Origin.
+  BudgetEmail:
+    Type: String
+    Description: Email that receives the monthly cost warning.
   MonthlyBudgetUsd:
     Type: Number
     Default: 10
     Description: Email a warning when this month's AWS cost passes 80% of this.
 
 Resources:
-  EventsTable:
+  # ---- Data: one DynamoDB table (single-table design, see server/cat_nanny/store.py) ----
+  RecordsTable:
     Type: AWS::DynamoDB::Table
     Properties:
       BillingMode: PAY_PER_REQUEST
@@ -37,15 +43,34 @@ Resources:
       KeySchema:
         - { AttributeName: pk, KeyType: HASH }
         - { AttributeName: sk, KeyType: RANGE }
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
 
-  FamilyAlertsTopic:
-    Type: AWS::SNS::Topic
+  # ---- Photos: private bucket; phones upload with presigned PUT URLs, pages view with presigned GET URLs ----
+  PhotoBucket:
+    Type: AWS::S3::Bucket
     Properties:
-      DisplayName: Cat Nanny
-      Subscription:
-        - Protocol: email
-          Endpoint: !Ref AlertEmail
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [PUT, GET, HEAD]
+            AllowedOrigins: ["*"]           # the upload page runs on this API's domain; the simulator on localhost
+            AllowedHeaders: ["*"]
+            MaxAge: 3600
+      LifecycleConfiguration:
+        Rules:
+          - Id: abort-incomplete-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 }
 
+  # ---- The MCP server ----
   McpFunctionLogs:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -62,24 +87,26 @@ Resources:
       Runtime: python3.13
       Architectures: [x86_64]
       MemorySize: 512
-      Timeout: 29
+      Timeout: 29                       # API Gateway's own limit
       Environment:
         Variables:
           STORE: dynamodb
-          TABLE_NAME: !Ref EventsTable
-          NOTIFIER: sns
-          SNS_TOPIC_ARN: !Ref FamilyAlertsTopic
+          TABLE_NAME: !Ref RecordsTable
+          PHOTOS: s3
+          PHOTO_BUCKET: !Ref PhotoBucket
+          # PUBLIC_BASE_URL is not set: links use the API's own host (set by the request).
           HOUSEHOLD_ID: !Ref HouseholdId
           HOUSEHOLD_TZ: !Ref HouseholdTz
           MCP_AUTH_TOKEN: !Ref McpAuthToken
+          ALLOWED_ORIGINS: !Ref AllowedOrigins
           LOG_LEVEL: INFO
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventsTable
+            TableName: !Ref RecordsTable
         - Statement:
             - Effect: Allow
-              Action: sns:Publish
-              Resource: !Ref FamilyAlertsTopic
+              Action: [s3:PutObject, s3:GetObject]   # HeadObject is covered by GetObject
+              Resource: !Sub ${PhotoBucket.Arn}/households/*
       Events:
         Http:
           Type: HttpApi
@@ -87,6 +114,7 @@ Resources:
             Path: /{proxy+}
             Method: ANY
 
+  # ---- Guard rail: a monthly cost budget ----
   CostBudget:
     Type: AWS::Budgets::Budget
     Properties:
@@ -104,7 +132,7 @@ Resources:
             ThresholdType: PERCENTAGE
           Subscribers:
             - SubscriptionType: EMAIL
-              Address: !Ref AlertEmail
+              Address: !Ref BudgetEmail
 
 Outputs:
   McpUrl:
@@ -113,8 +141,8 @@ Outputs:
   HealthUrl:
     Value: !Sub https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/healthz
   TableName:
-    Value: !Ref EventsTable
-  FamilyAlertsTopicArn:
-    Value: !Ref FamilyAlertsTopic
+    Value: !Ref RecordsTable
+  PhotoBucketName:
+    Value: !Ref PhotoBucket
   LogGroup:
     Value: !Ref McpFunctionLogs

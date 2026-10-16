@@ -30,7 +30,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from .config import Settings, get_settings
+from .config import Settings, get_settings, request_base_url
 from .photos import ALLOWED, MAX_PHOTO_BYTES, LocalPhotoStorage, PhotoStorage, PhotoValidationError, make_photo_storage, photo_key, sniff_content_type
 from .store import MemoryStore, Store, make_store
 from .tools import build_server, register_photo
@@ -40,10 +40,12 @@ log = logging.getLogger("cat_nanny")
 
 
 class GuardMiddleware:
-    """Origin check and optional bearer token for /mcp.
+    """Origin check and optional bearer token for /mcp; remembers the request's own URL for links.
 
     - MCP spec: if an Origin header is present and not allowed, answer 403.
     - Alexa+ docs: unauthenticated requests get 401 *without* a WWW-Authenticate header.
+    - Links handed to phones (upload page, local photos) are built on the host the request came in on
+      (API Gateway's domain on Lambda) unless PUBLIC_BASE_URL is set.
     """
 
     def __init__(self, app: ASGIApp, settings: Settings) -> None:
@@ -51,8 +53,14 @@ class GuardMiddleware:
         self.settings = settings
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope["path"].startswith("/mcp"):
-            headers = {k.decode().lower(): v.decode() for k, v in scope["headers"]}
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = {k.decode().lower(): v.decode() for k, v in scope["headers"]}
+        if host := headers.get("host"):
+            scheme = headers.get("x-forwarded-proto", scope.get("scheme", "http"))
+            request_base_url.set(f"{scheme}://{host}")
+        if scope["path"].startswith("/mcp"):
             origin = headers.get("origin")
             if origin and origin not in self.settings.allowed_origins:
                 await _error(403, "Origin not allowed")(scope, receive, send)
@@ -98,7 +106,7 @@ def _photo_routes(mcp: MCPServer[Any], store: Store, photos: PhotoStorage, setti
         if content_type not in ALLOWED:
             return JSONResponse({"detail": "Please choose a JPEG, PNG, or WebP image."}, status_code=422)
         key = photo_key(household, event_id, f"photo-{secrets.token_hex(6)}", content_type)
-        target = photos.upload_target(key, content_type, settings.public_base_url)
+        target = photos.upload_target(key, content_type, settings.base_url())
         return JSONResponse({"url": target.url, "method": target.method, "headers": target.headers,
                              "storage_key": target.storage_key, "max_bytes": MAX_PHOTO_BYTES})
 
@@ -114,7 +122,7 @@ def _photo_routes(mcp: MCPServer[Any], store: Store, photos: PhotoStorage, setti
             photo = register_photo(store, household, event_id, key, content_type, datetime.now(UTC))
         except KeyError:
             return JSONResponse({"detail": "Observation not found"}, status_code=404)
-        return JSONResponse({"ok": True, "photo_id": photo.photo_id, "url": photos.view_url(key, settings.public_base_url)})
+        return JSONResponse({"ok": True, "photo_id": photo.photo_id, "url": photos.view_url(key, settings.base_url())})
 
     if isinstance(photos, LocalPhotoStorage):
 
